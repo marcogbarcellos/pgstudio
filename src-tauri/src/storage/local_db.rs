@@ -252,6 +252,18 @@ impl LocalDb {
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
 
+    pub async fn delete_history(&self, id: i64) -> Result<()> {
+        let db = self.conn.lock().await;
+        db.execute("DELETE FROM query_history WHERE id = ?1", rusqlite::params![id])?;
+        Ok(())
+    }
+
+    pub async fn delete_history_by_sql(&self, sql_text: &str) -> Result<u64> {
+        let db = self.conn.lock().await;
+        let count = db.execute("DELETE FROM query_history WHERE sql = ?1", rusqlite::params![sql_text])?;
+        Ok(count as u64)
+    }
+
     pub async fn search_table_history(&self, connection_id: &str, table_name: &str, limit: i64) -> Result<Vec<QueryHistoryEntry>> {
         let db = self.conn.lock().await;
         let pattern = format!("%{}%", table_name);

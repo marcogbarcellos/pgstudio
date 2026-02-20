@@ -66,6 +66,7 @@ pub fn run() {
             commands::list_connections,
             commands::delete_connection,
             commands::get_query_history,
+            commands::delete_query_history,
             commands::search_table_history,
             commands::save_query,
             commands::get_saved_queries,

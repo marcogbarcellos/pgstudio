@@ -11,6 +11,7 @@ interface DataGridProps {
   tableName?: string;
   schemaName?: string;
   onDeleteRows?: (rowIndices: number[]) => void;
+  onSaveEdits?: (edits: { rowIdx: number; colIdx: number; newValue: unknown }[]) => Promise<void>;
   // Pagination
   totalRows?: number | null;
   page?: number;
@@ -205,6 +206,7 @@ export function DataGrid({
   tableName,
   schemaName,
   onDeleteRows,
+  onSaveEdits,
   totalRows,
   page,
   pageSize,
@@ -223,6 +225,66 @@ export function DataGrid({
   const copyRef = useRef<HTMLDivElement>(null);
   const exportRef = useRef<HTMLDivElement>(null);
 
+  // Inline editing state — use a ref alongside state so that saveEdits always
+  // reads the latest edits even when blur + click fire in the same event cycle.
+  const [editedCells, setEditedCells] = useState<Record<string, unknown>>({});
+  const editedCellsRef = useRef<Record<string, unknown>>({});
+  const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const hasEdits = Object.keys(editedCells).length > 0;
+  const cellKey = (r: number, c: number) => `${r}:${c}`;
+
+  const commitEdit = useCallback((row: number, col: number, newValue: unknown) => {
+    const originalValue = rows[row][col];
+    const key = cellKey(row, col);
+    const same =
+      newValue === originalValue ||
+      (newValue === null && originalValue === null) ||
+      (newValue !== null && originalValue !== null && String(newValue) === String(originalValue));
+    if (same) {
+      const next = { ...editedCellsRef.current };
+      delete next[key];
+      editedCellsRef.current = next;
+      setEditedCells(next);
+    } else {
+      const next = { ...editedCellsRef.current, [key]: newValue };
+      editedCellsRef.current = next;
+      setEditedCells(next);
+    }
+    setEditingCell(null);
+  }, [rows]);
+
+  const discardEdits = useCallback(() => {
+    editedCellsRef.current = {};
+    setEditedCells({});
+    setEditingCell(null);
+    setSaveError(null);
+  }, []);
+
+  const saveEdits = useCallback(async () => {
+    if (!onSaveEdits || isSaving) return;
+    setSaveError(null);
+    setIsSaving(true);
+    // Read from ref to get the absolute latest edits (avoids stale closure)
+    const currentEdits = editedCellsRef.current;
+    const edits = Object.entries(currentEdits).map(([key, newValue]) => {
+      const [r, c] = key.split(":").map(Number);
+      return { rowIdx: r, colIdx: c, newValue };
+    });
+    if (edits.length === 0) { setIsSaving(false); return; }
+    try {
+      await onSaveEdits(edits);
+      editedCellsRef.current = {};
+      setEditedCells({});
+      setEditingCell(null);
+    } catch (e) {
+      setSaveError(String(e));
+    } finally {
+      setIsSaving(false);
+    }
+  }, [onSaveEdits, isSaving]);
+
   // Close dropdowns on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -233,9 +295,13 @@ export function DataGrid({
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // Reset selection when data changes
+  // Reset selection and edits when data changes
   useEffect(() => {
     setSelected(new Set());
+    editedCellsRef.current = {};
+    setEditedCells({});
+    setEditingCell(null);
+    setSaveError(null);
   }, [rows]);
 
   const toggleRow = useCallback((idx: number) => {
@@ -467,6 +533,46 @@ export function DataGrid({
         )}
       </div>
 
+      {/* Save/Discard bar for inline edits */}
+      {(hasEdits || saveError) && onSaveEdits && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: "10px",
+          padding: "8px 16px", fontSize: "12px",
+          backgroundColor: saveError ? "rgba(239,68,68,0.1)" : "rgba(250,204,21,0.1)",
+          borderBottom: saveError ? "1px solid rgba(239,68,68,0.3)" : "1px solid rgba(250,204,21,0.3)",
+          flexShrink: 0, flexWrap: "wrap",
+        }}>
+          {hasEdits && (
+            <span style={{ color: "#eab308", fontWeight: 500 }}>
+              {Object.keys(editedCells).length} unsaved change{Object.keys(editedCells).length !== 1 ? "s" : ""}
+            </span>
+          )}
+          {saveError && (
+            <span style={{ color: "var(--color-danger)", fontSize: "11px", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={saveError}>
+              Error: {saveError}
+            </span>
+          )}
+          {hasEdits && (
+            <>
+              <button onClick={saveEdits} disabled={isSaving} style={{
+                borderRadius: "6px", padding: "4px 12px", fontSize: "11px", fontWeight: 500,
+                backgroundColor: "var(--color-accent)", color: "white", border: "none",
+                cursor: isSaving ? "default" : "pointer", opacity: isSaving ? 0.5 : 1,
+              }}>
+                {isSaving ? "Saving..." : "Save"}
+              </button>
+              <button onClick={discardEdits} disabled={isSaving} style={{
+                borderRadius: "6px", padding: "4px 12px", fontSize: "11px",
+                border: "1px solid var(--color-border)", backgroundColor: "transparent",
+                color: "var(--color-text-secondary)", cursor: "pointer",
+              }}>
+                Discard
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Table */}
       <div style={{ flex: 1, overflow: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
@@ -589,33 +695,50 @@ export function DataGrid({
                   >
                     {rowOffset + rowIdx + 1}
                   </td>
-                  {row.map((cell, colIdx) => (
-                    <td
-                      key={colIdx}
-                      title={cell === null ? "NULL" : String(cell)}
-                      style={{
-                        borderBottom: "1px solid var(--color-border)",
-                        borderRight: "1px solid var(--color-border)",
-                        padding: "6px 16px",
-                        maxWidth: "300px",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        color: cell === null ? "var(--color-text-muted)" : "var(--color-text-primary)",
-                        fontStyle: cell === null ? "italic" : "normal",
-                      }}
-                    >
-                      {cell === null ? (
-                        "NULL"
-                      ) : typeof cell === "object" ? (
-                        <span style={{ fontFamily: "monospace", fontSize: "12px", color: "var(--color-info)" }}>
-                          {JSON.stringify(cell)}
-                        </span>
-                      ) : (
-                        String(cell)
-                      )}
-                    </td>
-                  ))}
+                  {row.map((cell, colIdx) => {
+                    const ck = cellKey(rowIdx, colIdx);
+                    const isEdited = ck in editedCells;
+                    const displayValue = isEdited ? editedCells[ck] : cell;
+                    const isEditingThis = editingCell?.row === rowIdx && editingCell?.col === colIdx;
+                    const canEdit = !!onSaveEdits;
+                    return (
+                      <td
+                        key={colIdx}
+                        title={displayValue === null ? "NULL" : typeof displayValue === "object" ? JSON.stringify(displayValue) : String(displayValue)}
+                        onDoubleClick={canEdit && !isEditingThis ? () => setEditingCell({ row: rowIdx, col: colIdx }) : undefined}
+                        style={{
+                          borderBottom: "1px solid var(--color-border)",
+                          borderRight: "1px solid var(--color-border)",
+                          padding: isEditingThis ? "0" : "6px 16px",
+                          maxWidth: "300px",
+                          overflow: isEditingThis ? "visible" : "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          color: displayValue === null ? "var(--color-text-muted)" : "var(--color-text-primary)",
+                          fontStyle: displayValue === null ? "italic" : "normal",
+                          backgroundColor: isEdited ? "rgba(250,204,21,0.08)" : undefined,
+                          position: isEditingThis ? "relative" : undefined,
+                        }}
+                      >
+                        {isEditingThis ? (
+                          <CellEditor
+                            value={isEdited ? editedCells[ck] : cell}
+                            dataType={columns[colIdx].data_type}
+                            onCommit={(v) => commitEdit(rowIdx, colIdx, v)}
+                            onCancel={() => setEditingCell(null)}
+                          />
+                        ) : displayValue === null ? (
+                          "NULL"
+                        ) : typeof displayValue === "object" ? (
+                          <span style={{ fontFamily: "monospace", fontSize: "12px", color: "var(--color-info)" }}>
+                            {JSON.stringify(displayValue)}
+                          </span>
+                        ) : (
+                          String(displayValue)
+                        )}
+                      </td>
+                    );
+                  })}
                 </tr>
               );
             })}
@@ -752,6 +875,123 @@ export function DataGrid({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function CellEditor({ value, dataType, onCommit, onCancel }: {
+  value: unknown;
+  dataType: string;
+  onCommit: (newValue: unknown) => void;
+  onCancel: () => void;
+}) {
+  const dt = dataType.toLowerCase();
+  const isBool = dt === "boolean" || dt === "bool";
+  const isJson = dt === "json" || dt === "jsonb";
+  const isNumeric = /^(integer|int2|int4|int8|smallint|bigint|serial|bigserial|smallserial|numeric|decimal|real|float|float4|float8|double precision|money)/.test(dt);
+
+  const [text, setText] = useState(() => {
+    if (value === null) return isBool ? "null" : "";
+    if (typeof value === "object") return JSON.stringify(value);
+    return String(value);
+  });
+
+  const commit = () => {
+    if (isBool) {
+      if (text === "null") { onCommit(null); return; }
+      onCommit(text === "true");
+      return;
+    }
+    if (isNumeric) {
+      if (text.trim() === "") { onCommit(null); return; }
+      const n = Number(text);
+      onCommit(isNaN(n) ? text : n);
+      return;
+    }
+    if (isJson) {
+      if (text.trim() === "") { onCommit(null); return; }
+      try { onCommit(JSON.parse(text)); } catch { onCommit(text); }
+      return;
+    }
+    onCommit(text);
+  };
+
+  const setNull = () => onCommit(null);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commit(); }
+    if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+    e.stopPropagation();
+  };
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%", fontSize: "13px", padding: "4px 6px",
+    backgroundColor: "var(--color-bg-primary)", color: "var(--color-text-primary)",
+    border: "1px solid var(--color-accent)", borderRadius: "4px", outline: "none",
+  };
+
+  const nullBtnStyle: React.CSSProperties = {
+    fontSize: "10px", color: "var(--color-text-muted)", background: "none",
+    border: "none", cursor: "pointer", padding: "2px 4px", whiteSpace: "nowrap",
+  };
+
+  if (isBool) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", padding: "2px 4px" }}>
+        <select
+          autoFocus
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onBlur={commit}
+          style={inputStyle}
+        >
+          <option value="true">true</option>
+          <option value="false">false</option>
+          <option value="null">NULL</option>
+        </select>
+      </div>
+    );
+  }
+
+  if (isJson) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: "4px", padding: "2px 4px" }}>
+        <textarea
+          autoFocus
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); commit(); }
+            e.stopPropagation();
+          }}
+          onBlur={commit}
+          rows={3}
+          style={{ ...inputStyle, fontFamily: "monospace", fontSize: "12px", resize: "vertical", minHeight: "40px" }}
+        />
+        <button onMouseDown={(e) => { e.preventDefault(); setNull(); }} style={nullBtnStyle}>
+          NULL
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "4px", padding: "2px 4px" }}>
+      <input
+        autoFocus
+        onFocus={(e) => e.currentTarget.select()}
+        type={isNumeric ? "number" : "text"}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onBlur={commit}
+        style={inputStyle}
+      />
+      <button onMouseDown={(e) => { e.preventDefault(); setNull(); }} style={nullBtnStyle}>
+        NULL
+      </button>
     </div>
   );
 }

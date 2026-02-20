@@ -374,12 +374,13 @@ export function TableEditorView() {
       setTabs((prev) => [...prev, newTab]);
       setActiveTabId(tabId);
       try {
-        const [data, countResult] = await Promise.all([
+        const [data, countResult, colInfo] = await Promise.all([
           getTableData(activeConnectionId, schemaName, tableName, DEFAULT_PAGE_SIZE, 0),
           executeQuery(activeConnectionId, `SELECT COUNT(*) FROM "${schemaName}"."${tableName}"`),
+          getColumns(activeConnectionId, schemaName, tableName),
         ]);
         const total = Number(countResult.rows[0]?.[0] ?? 0);
-        setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, data, totalRows: total, loading: false } : t)));
+        setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, data, columns: colInfo, totalRows: total, loading: false } : t)));
       } catch (e) {
         setTabs((prev) => prev.map((t) => t.id === tabId ? { ...t, error: String(e), loading: false } : t));
       }
@@ -485,21 +486,40 @@ export function TableEditorView() {
       const deletes: string[] = [];
       for (const idx of rowIndices) {
         const row = rows[idx];
-        const conditions = cols
-          .map((col, colIdx) => {
-            const val = row[colIdx];
-            if (val === null) return `"${col.name}" IS NULL`;
-            if (typeof val === "number" || typeof val === "boolean") return `"${col.name}" = ${val}`;
-            const s = typeof val === "object" ? JSON.stringify(val) : String(val);
-            return `"${col.name}" = '${s.replace(/'/g, "''")}'`;
-          })
-          .join(" AND ");
+        const conditions = buildWhereClause(row, cols, activeTab.columns);
         deletes.push(`DELETE FROM ${fqTable(activeTab.schema, activeTab.table)} WHERE ${conditions};`);
       }
       try {
         for (const sql of deletes) { await executeQuery(activeConnectionId, sql); }
         await refreshTab(activeTab.id);
       } catch (e) { console.error("Delete failed:", e); }
+    },
+    [activeConnectionId, activeTab, refreshTab],
+  );
+
+  const handleSaveEdits = useCallback(
+    async (edits: { rowIdx: number; colIdx: number; newValue: unknown }[]) => {
+      if (!activeConnectionId || !activeTab?.data) return;
+      const cols = activeTab.data.columns;
+      const dataRows = activeTab.data.rows;
+      const editsByRow = new Map<number, { colIdx: number; newValue: unknown }[]>();
+      for (const edit of edits) {
+        if (!editsByRow.has(edit.rowIdx)) editsByRow.set(edit.rowIdx, []);
+        editsByRow.get(edit.rowIdx)!.push(edit);
+      }
+      for (const [rowIdx, rowEdits] of editsByRow) {
+        const row = dataRows[rowIdx];
+        const setClause = rowEdits.map(({ colIdx, newValue }) => {
+          const colName = cols[colIdx].name;
+          if (newValue === null) return `"${colName}" = NULL`;
+          if (typeof newValue === "number" || typeof newValue === "boolean") return `"${colName}" = ${newValue}`;
+          const s = typeof newValue === "object" ? JSON.stringify(newValue) : String(newValue);
+          return `"${colName}" = '${s.replace(/'/g, "''")}'`;
+        }).join(", ");
+        const conditions = buildWhereClause(row, cols, activeTab.columns);
+        await executeQuery(activeConnectionId, `UPDATE ${fqTable(activeTab.schema, activeTab.table)} SET ${setClause} WHERE ${conditions};`);
+      }
+      await refreshTab(activeTab.id);
     },
     [activeConnectionId, activeTab, refreshTab],
   );
@@ -815,7 +835,7 @@ export function TableEditorView() {
           {activeTab ? (
             activeTab.loading ? <CenteredMessage text="Loading..." /> :
             activeTab.error ? <CenteredMessage text={activeTab.error} danger /> :
-            activeTab.data ? <DataGrid columns={activeTab.data.columns} rows={activeTab.data.rows} rowCount={activeTab.data.row_count} tableName={activeTab.table} schemaName={activeTab.schema} onDeleteRows={handleDeleteRows} totalRows={activeTab.totalRows} page={activeTab.page} pageSize={activeTab.pageSize} rowOffset={activeTab.page * activeTab.pageSize} onPageChange={(p) => handlePageChange(activeTab.id, p)} onPageSizeChange={(s) => handlePageSizeChange(activeTab.id, s)} sortColumn={activeTab.sortColumn} sortDirection={activeTab.sortDirection} onSortChange={(col, dir) => handleSortChange(activeTab.id, col, dir)} recentSortColumns={activeTab.recentSortColumns} /> : null
+            activeTab.data ? <DataGrid columns={activeTab.data.columns} rows={activeTab.data.rows} rowCount={activeTab.data.row_count} tableName={activeTab.table} schemaName={activeTab.schema} onDeleteRows={handleDeleteRows} onSaveEdits={handleSaveEdits} totalRows={activeTab.totalRows} page={activeTab.page} pageSize={activeTab.pageSize} rowOffset={activeTab.page * activeTab.pageSize} onPageChange={(p) => handlePageChange(activeTab.id, p)} onPageSizeChange={(s) => handlePageSizeChange(activeTab.id, s)} sortColumn={activeTab.sortColumn} sortDirection={activeTab.sortDirection} onSortChange={(col, dir) => handleSortChange(activeTab.id, col, dir)} recentSortColumns={activeTab.recentSortColumns} /> : null
           ) : <CenteredMessage text="Select a table to view its data" />}
         </div>
       </div>
@@ -1245,6 +1265,40 @@ function MenuDivider() {
 }
 
 // ── Format helpers ──
+
+function sqlValue(val: unknown, colName: string): string {
+  if (val === null) return `"${colName}" IS NULL`;
+  if (typeof val === "number" || typeof val === "boolean") return `"${colName}" = ${val}`;
+  const s = typeof val === "object" ? JSON.stringify(val) : String(val);
+  return `"${colName}" = '${s.replace(/'/g, "''")}'`;
+}
+
+function buildWhereClause(
+  row: unknown[],
+  dataCols: { name: string; data_type: string }[],
+  colInfo: ColumnInfo[] | null,
+): string {
+  // Use primary key columns if available — much more reliable than matching all columns
+  const pkCols = colInfo?.filter((c) => c.is_primary_key) || [];
+  if (pkCols.length > 0) {
+    return pkCols
+      .map((pk) => {
+        const idx = dataCols.findIndex((c) => c.name === pk.name);
+        if (idx < 0) return null;
+        return sqlValue(row[idx], pk.name);
+      })
+      .filter(Boolean)
+      .join(" AND ");
+  }
+  // Fallback: use all non-null columns
+  return dataCols
+    .map((col, i) => {
+      if (row[i] === null) return null; // skip nulls in fallback — they're unreliable
+      return sqlValue(row[i], col.name);
+    })
+    .filter(Boolean)
+    .join(" AND ");
+}
 
 function formatColumnDef(col: ColumnInfo): string {
   const lines: string[] = [];

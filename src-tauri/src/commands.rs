@@ -357,6 +357,22 @@ pub async fn get_query_history(
 }
 
 #[tauri::command]
+pub async fn delete_query_history(
+    id: Option<i64>,
+    sql: Option<String>,
+    local_db: State<'_, LocalDb>,
+) -> Result<(), String> {
+    if let Some(id) = id {
+        local_db.delete_history(id).await.map_err(|e| e.to_string())
+    } else if let Some(sql) = sql {
+        local_db.delete_history_by_sql(&sql).await.map_err(|e| e.to_string())?;
+        Ok(())
+    } else {
+        Err("Either id or sql must be provided".into())
+    }
+}
+
+#[tauri::command]
 pub async fn save_query(
     name: String,
     sql: String,

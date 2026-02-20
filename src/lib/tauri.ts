@@ -202,6 +202,9 @@ export const deleteConnection = (id: string) =>
 export const getQueryHistory = (connectionId?: string, limit?: number) =>
   invoke<QueryHistoryEntry[]>("get_query_history", { connectionId, limit });
 
+export const deleteQueryHistory = (id?: number, sql?: string) =>
+  invoke<void>("delete_query_history", { id, sql });
+
 export const searchTableHistory = (connectionId: string, tableName: string, limit?: number) =>
   invoke<QueryHistoryEntry[]>("search_table_history", { connectionId, tableName, limit });
 

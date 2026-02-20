@@ -9,8 +9,10 @@ import {
   aiOptimize,
   getQueryHistory,
   searchAiPrompts,
+  getColumns,
+  deleteQueryHistory,
 } from "@/lib/tauri";
-import type { QueryResult, QueryHistoryEntry, AiPromptSuggestion } from "@/lib/tauri";
+import type { QueryResult, QueryHistoryEntry, AiPromptSuggestion, ColumnInfo } from "@/lib/tauri";
 import {
   Play,
   Plus,
@@ -22,6 +24,7 @@ import {
   Zap,
   Clock,
   GripHorizontal,
+  Trash2,
 } from "lucide-react";
 
 interface Tab {
@@ -193,6 +196,76 @@ export function SQLEditorView() {
       );
     },
     [],
+  );
+
+  // Try to extract table from simple SELECT queries for inline editing
+  const parsedTable = useMemo(() => {
+    const sql = activeTab.sql.trim();
+    if (!sql.toLowerCase().startsWith("select")) return null;
+    if (/\bjoin\b/i.test(sql)) return null;
+    if (/\(\s*select\b/i.test(sql)) return null;
+    const m = sql.match(/\bFROM\s+"([^"]+)"\s*\.\s*"([^"]+)"/i)
+      || sql.match(/\bFROM\s+(\w+)\s*\.\s*(\w+)/i)
+      || sql.match(/\bFROM\s+"([^"]+)"/i)
+      || sql.match(/\bFROM\s+(\w+)/i);
+    if (!m) return null;
+    if (m[2]) return { schema: m[1], table: m[2] };
+    return { schema: "public", table: m[1] };
+  }, [activeTab.sql]);
+
+  const handleSqlSaveEdits = useCallback(
+    async (edits: { rowIdx: number; colIdx: number; newValue: unknown }[]) => {
+      if (!activeConnectionId || !activeTab.result || !parsedTable) return;
+      const cols = activeTab.result.columns;
+      const dataRows = activeTab.result.rows;
+      const fqt = `"${parsedTable.schema}"."${parsedTable.table}"`;
+      // Load column info to find primary keys
+      let colInfo: ColumnInfo[] | null = null;
+      try {
+        colInfo = await getColumns(activeConnectionId, parsedTable.schema, parsedTable.table);
+      } catch { /* fall back to all-columns WHERE */ }
+      const pkCols = colInfo?.filter((c) => c.is_primary_key) || [];
+      const editsByRow = new Map<number, { colIdx: number; newValue: unknown }[]>();
+      for (const edit of edits) {
+        if (!editsByRow.has(edit.rowIdx)) editsByRow.set(edit.rowIdx, []);
+        editsByRow.get(edit.rowIdx)!.push(edit);
+      }
+      for (const [rowIdx, rowEdits] of editsByRow) {
+        const row = dataRows[rowIdx];
+        const setClause = rowEdits.map(({ colIdx, newValue }) => {
+          const colName = cols[colIdx].name;
+          if (newValue === null) return `"${colName}" = NULL`;
+          if (typeof newValue === "number" || typeof newValue === "boolean") return `"${colName}" = ${newValue}`;
+          const s = typeof newValue === "object" ? JSON.stringify(newValue) : String(newValue);
+          return `"${colName}" = '${s.replace(/'/g, "''")}'`;
+        }).join(", ");
+        let conditions: string;
+        if (pkCols.length > 0) {
+          conditions = pkCols.map((pk) => {
+            const ci = cols.findIndex((c) => c.name === pk.name);
+            if (ci < 0) return null;
+            const val = row[ci];
+            if (val === null) return `"${pk.name}" IS NULL`;
+            if (typeof val === "number" || typeof val === "boolean") return `"${pk.name}" = ${val}`;
+            const s = typeof val === "object" ? JSON.stringify(val) : String(val);
+            return `"${pk.name}" = '${s.replace(/'/g, "''")}'`;
+          }).filter(Boolean).join(" AND ");
+        } else {
+          conditions = cols.map((col, ci) => {
+            const val = row[ci];
+            if (val === null) return null;
+            if (typeof val === "number" || typeof val === "boolean") return `"${col.name}" = ${val}`;
+            const s = typeof val === "object" ? JSON.stringify(val) : String(val);
+            return `"${col.name}" = '${s.replace(/'/g, "''")}'`;
+          }).filter(Boolean).join(" AND ");
+        }
+        await executeQuery(activeConnectionId, `UPDATE ${fqt} SET ${setClause} WHERE ${conditions};`);
+      }
+      const res = await executeQuery(activeConnectionId, activeTab.sql.trim());
+      updateTab(activeTab.id, { result: res, error: null });
+      refreshRecent();
+    },
+    [activeConnectionId, activeTab, parsedTable, updateTab, refreshRecent],
   );
 
   // Auto-execute a tab created with autoRun flag
@@ -689,6 +762,9 @@ export function SQLEditorView() {
                 rows={activeTab.result.rows}
                 rowCount={activeTab.result.row_count}
                 executionTime={activeTab.result.execution_time_ms}
+                tableName={parsedTable?.table}
+                schemaName={parsedTable?.schema}
+                onSaveEdits={parsedTable ? handleSqlSaveEdits : undefined}
               />
             )}
             {!activeTab.result && !activeTab.error && (
@@ -755,48 +831,80 @@ export function SQLEditorView() {
             </div>
           ) : (
             recentQueries.map((entry) => (
-              <button
+              <div
                 key={entry.id}
-                onClick={() => handleUseRecentQuery(entry.sql)}
                 style={{
-                  display: "block",
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "10px 12px",
-                  background: "none",
-                  border: "none",
+                  display: "flex",
+                  alignItems: "stretch",
                   borderBottom: "1px solid var(--color-border)",
-                  cursor: "pointer",
-                  transition: "background-color 0.1s ease",
                 }}
               >
-                <pre
+                <button
+                  onClick={() => handleUseRecentQuery(entry.sql)}
                   style={{
-                    fontSize: "11px",
-                    fontFamily: "monospace",
-                    color: "var(--color-text-primary)",
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-all",
-                    maxHeight: "48px",
-                    overflow: "hidden",
-                    margin: 0,
-                    lineHeight: 1.4,
+                    display: "block",
+                    flex: 1,
+                    textAlign: "left",
+                    padding: "10px 12px",
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    transition: "background-color 0.1s ease",
+                    minWidth: 0,
                   }}
                 >
-                  {entry.sql}
-                </pre>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px", fontSize: "10px", color: "var(--color-text-muted)" }}>
-                  <span style={{ color: entry.success ? "var(--color-accent)" : "var(--color-danger)" }}>
-                    {entry.success ? `${entry.row_count} rows` : "error"}
-                  </span>
-                  <span>{entry.execution_time_ms}ms</span>
-                  {entry.run_count > 1 && (
-                    <span style={{ marginLeft: "auto", backgroundColor: "var(--color-bg-tertiary, rgba(255,255,255,0.08))", borderRadius: "4px", padding: "1px 5px", fontSize: "10px", color: "var(--color-text-muted)" }}>
-                      {entry.run_count}x
+                  <pre
+                    style={{
+                      fontSize: "11px",
+                      fontFamily: "monospace",
+                      color: "var(--color-text-primary)",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-all",
+                      maxHeight: "48px",
+                      overflow: "hidden",
+                      margin: 0,
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {entry.sql}
+                  </pre>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px", fontSize: "10px", color: "var(--color-text-muted)" }}>
+                    <span style={{ color: entry.success ? "var(--color-accent)" : "var(--color-danger)" }}>
+                      {entry.success ? `${entry.row_count} rows` : "error"}
                     </span>
-                  )}
-                </div>
-              </button>
+                    <span>{entry.execution_time_ms}ms</span>
+                    {entry.run_count > 1 && (
+                      <span style={{ marginLeft: "auto", backgroundColor: "var(--color-bg-tertiary, rgba(255,255,255,0.08))", borderRadius: "4px", padding: "1px 5px", fontSize: "10px", color: "var(--color-text-muted)" }}>
+                        {entry.run_count}x
+                      </span>
+                    )}
+                  </div>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteQueryHistory(undefined, entry.sql).then(refreshRecent).catch(() => {});
+                  }}
+                  title="Delete from history"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: "32px",
+                    flexShrink: 0,
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "var(--color-text-muted)",
+                    opacity: 0.4,
+                    transition: "opacity 0.15s ease, color 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "var(--color-danger)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.4"; e.currentTarget.style.color = "var(--color-text-muted)"; }}
+                >
+                  <Trash2 size={11} />
+                </button>
+              </div>
             ))
           )}
         </div>
