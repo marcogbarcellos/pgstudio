@@ -5,14 +5,18 @@ import type { AIConfigResponse } from "@/lib/tauri";
 import {
   ANTHROPIC_MODELS,
   OPENAI_MODELS,
+  GEMINI_MODELS,
   DEFAULT_ANTHROPIC_MODEL,
   DEFAULT_OPENAI_MODEL,
+  DEFAULT_GEMINI_MODEL,
 } from "@/lib/models";
 import { Bot, CheckCircle2, ChevronDown, Pencil, Shield, Cpu, Key } from "lucide-react";
 
+type AIProvider = "anthropic" | "openai" | "google";
+
 export function AISettingsView() {
   const { configured, setConfigured } = useAIStore();
-  const [provider, setProvider] = useState<"anthropic" | "openai">("anthropic");
+  const [provider, setProvider] = useState<AIProvider>("anthropic");
   const [model, setModel] = useState(DEFAULT_ANTHROPIC_MODEL);
   const [customModel, setCustomModel] = useState("");
   const [isCustomModel, setIsCustomModel] = useState(false);
@@ -23,7 +27,11 @@ export function AISettingsView() {
   const [editing, setEditing] = useState(false);
   const [currentConfig, setCurrentConfig] = useState<AIConfigResponse | null>(null);
 
-  const models = provider === "anthropic" ? ANTHROPIC_MODELS : OPENAI_MODELS;
+  const models = provider === "anthropic"
+    ? ANTHROPIC_MODELS
+    : provider === "openai"
+      ? OPENAI_MODELS
+      : GEMINI_MODELS;
 
   useEffect(() => {
     aiStatus().then(setConfigured).catch(() => {});
@@ -43,11 +51,17 @@ export function AISettingsView() {
     }).catch(() => {});
   }, [setConfigured]);
 
-  const handleProviderChange = (p: "anthropic" | "openai") => {
+  const handleProviderChange = (p: AIProvider) => {
     setProvider(p);
     setIsCustomModel(false);
     setCustomModel("");
-    setModel(p === "anthropic" ? DEFAULT_ANTHROPIC_MODEL : DEFAULT_OPENAI_MODEL);
+    setModel(
+      p === "anthropic"
+        ? DEFAULT_ANTHROPIC_MODEL
+        : p === "openai"
+          ? DEFAULT_OPENAI_MODEL
+          : DEFAULT_GEMINI_MODEL,
+    );
     setSuccess(false);
   };
 
@@ -271,8 +285,8 @@ export function AISettingsView() {
             <label style={{ display: "block", fontSize: "11px", fontWeight: 500, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "10px" }}>
               Provider
             </label>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-              {(["anthropic", "openai"] as const).map((p) => (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "10px" }}>
+              {(["anthropic", "openai", "google"] as const).map((p) => (
                 <button
                   key={p}
                   onClick={() => handleProviderChange(p)}
@@ -286,10 +300,10 @@ export function AISettingsView() {
                   }}
                 >
                   <span style={{ fontSize: "14px", fontWeight: 600, color: provider === p ? "var(--color-accent)" : "var(--color-text-secondary)" }}>
-                    {p === "anthropic" ? "Anthropic" : "OpenAI"}
+                    {p === "anthropic" ? "Anthropic" : p === "openai" ? "OpenAI" : "Google"}
                   </span>
                   <span style={{ fontSize: "12px", color: "var(--color-text-muted)" }}>
-                    {p === "anthropic" ? "Claude models" : "GPT models"}
+                    {p === "anthropic" ? "Claude models" : p === "openai" ? "GPT models" : "Gemini models"}
                   </span>
                 </button>
               ))}
@@ -326,7 +340,7 @@ export function AISettingsView() {
               <input
                 value={customModel}
                 onChange={(e) => { setCustomModel(e.target.value); setSuccess(false); }}
-                placeholder="Enter model ID (e.g. claude-3-opus-20240229)"
+                placeholder="Enter model ID (e.g. gemini-2.5-flash-lite)"
                 style={{
                   width: "100%", borderRadius: "12px", border: "1px solid var(--color-border)",
                   backgroundColor: "var(--color-bg-tertiary)", padding: "10px 14px",
@@ -346,7 +360,13 @@ export function AISettingsView() {
               type="password"
               value={apiKey}
               onChange={(e) => { setApiKey(e.target.value); setSuccess(false); setError(""); }}
-              placeholder={configured ? "Enter new API key to update" : (provider === "anthropic" ? "sk-ant-api03-..." : "sk-proj-...")}
+              placeholder={configured
+                ? "Enter new API key to update"
+                : provider === "anthropic"
+                  ? "sk-ant-api03-..."
+                  : provider === "openai"
+                    ? "sk-proj-..."
+                    : "AIza..."}
               style={{
                 width: "100%", borderRadius: "12px", border: "1px solid var(--color-border)",
                 backgroundColor: "var(--color-bg-tertiary)", padding: "10px 14px",

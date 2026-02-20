@@ -468,13 +468,15 @@ pub async fn ai_configure(
     let provider = match input.provider.as_str() {
         "anthropic" => AIProvider::Anthropic,
         "openai" => AIProvider::OpenAI,
-        _ => return Err("Invalid provider. Use 'anthropic' or 'openai'.".into()),
+        "google" => AIProvider::Google,
+        _ => return Err("Invalid provider. Use 'anthropic', 'openai', or 'google'.".into()),
     };
 
     let model = input.model.unwrap_or_else(|| {
         match provider {
             AIProvider::Anthropic => "claude-sonnet-4-6".into(),
             AIProvider::OpenAI => "gpt-4.1".into(),
+            AIProvider::Google => "gemini-2.5-flash-lite".into(),
         }
     });
 
