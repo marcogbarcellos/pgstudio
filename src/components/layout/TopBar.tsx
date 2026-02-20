@@ -1,6 +1,8 @@
 import { useConnectionStore } from "@/stores/connection-store";
 import { Database, Circle } from "lucide-react";
 
+const isMac = navigator.userAgent.includes("Mac");
+
 export function TopBar() {
   const { isConnected, activeConnectionId, connections } = useConnectionStore();
   const activeConnection = connections.find((c) => c.id === activeConnectionId);
@@ -18,7 +20,7 @@ export function TopBar() {
       }}
     >
       {/* Spacer for macOS traffic lights */}
-      <div style={{ width: "64px" }} data-tauri-drag-region />
+      {isMac && <div style={{ width: "64px" }} data-tauri-drag-region />}
 
       <div style={{ display: "flex", alignItems: "center", gap: "12px" }} data-tauri-drag-region>
         <span style={{ fontSize: "14px", fontWeight: 600, color: "var(--color-text-primary)", letterSpacing: "-0.01em" }}>

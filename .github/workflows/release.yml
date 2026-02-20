@@ -1,0 +1,184 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            runner: macos-latest
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+          - platform: windows
+            runner: windows-latest
+            rust_targets: x86_64-pc-windows-msvc
+          - platform: linux
+            runner: ubuntu-22.04
+            rust_targets: x86_64-unknown-linux-gnu
+
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      # Linux dependencies for Tauri
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev \
+            javascriptcoregtk-4.1-dev
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      # ── macOS: build arm64 + x86_64 + universal ──
+      - name: Build macOS (aarch64)
+        if: matrix.platform == 'macos'
+        run: pnpm tauri build --target aarch64-apple-darwin
+
+      - name: Build macOS (x86_64)
+        if: matrix.platform == 'macos'
+        run: pnpm tauri build --target x86_64-apple-darwin
+
+      - name: Create macOS universal binary
+        if: matrix.platform == 'macos'
+        run: |
+          mkdir -p src-tauri/target/universal-apple-darwin/release/bundle/macos
+
+          lipo -create \
+            src-tauri/target/aarch64-apple-darwin/release/pgstudio \
+            src-tauri/target/x86_64-apple-darwin/release/pgstudio \
+            -output src-tauri/target/universal-apple-darwin/release/pgstudio
+
+          cp -R src-tauri/target/aarch64-apple-darwin/release/bundle/macos/PgStudio.app \
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/PgStudio.app
+          mkdir -p src-tauri/target/universal-apple-darwin/release/bundle/macos/PgStudio.app/Contents/MacOS
+          cp src-tauri/target/universal-apple-darwin/release/pgstudio \
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/PgStudio.app/Contents/MacOS/pgstudio
+
+          hdiutil create -volname "PgStudio" \
+            -srcfolder src-tauri/target/universal-apple-darwin/release/bundle/macos/PgStudio.app \
+            -ov -format UDZO \
+            "PgStudio_${GITHUB_REF_NAME}_universal.dmg"
+
+      - name: Collect macOS artifacts
+        if: matrix.platform == 'macos'
+        run: |
+          cp src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg \
+            "PgStudio_${GITHUB_REF_NAME}_aarch64.dmg"
+          cp src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg \
+            "PgStudio_${GITHUB_REF_NAME}_x86_64.dmg"
+
+      # ── Windows ──
+      - name: Build Windows
+        if: matrix.platform == 'windows'
+        run: pnpm tauri build
+
+      - name: Collect Windows artifacts
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: |
+          cp src-tauri/target/release/bundle/msi/*.msi \
+            "PgStudio_${GITHUB_REF_NAME}_x64.msi" 2>/dev/null || true
+          cp src-tauri/target/release/bundle/nsis/*.exe \
+            "PgStudio_${GITHUB_REF_NAME}_x64-setup.exe" 2>/dev/null || true
+
+      # ── Linux ──
+      - name: Build Linux
+        if: matrix.platform == 'linux'
+        run: pnpm tauri build
+
+      - name: Collect Linux artifacts
+        if: matrix.platform == 'linux'
+        run: |
+          cp src-tauri/target/release/bundle/deb/*.deb \
+            "PgStudio_${GITHUB_REF_NAME}_amd64.deb" 2>/dev/null || true
+          cp src-tauri/target/release/bundle/rpm/*.rpm \
+            "PgStudio_${GITHUB_REF_NAME}_x86_64.rpm" 2>/dev/null || true
+          cp src-tauri/target/release/bundle/appimage/*.AppImage \
+            "PgStudio_${GITHUB_REF_NAME}_x86_64.AppImage" 2>/dev/null || true
+
+      # ── Upload artifacts for the release job ──
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.platform }}
+          path: PgStudio_*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Compute SHA256
+        run: |
+          echo "### SHA256 Checksums" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          sha256sum PgStudio_* | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          sha256sum PgStudio_* > checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          draft: false
+          files: |
+            PgStudio_*
+            checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-homebrew:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Homebrew tap update
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          repository: ${{ github.repository_owner }}/homebrew-tap
+          event-type: update-cask
+          client-payload: |
+            {
+              "version": "${{ github.ref_name }}",
+              "repo": "${{ github.repository }}"
+            }

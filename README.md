@@ -1,6 +1,6 @@
 # PgStudio
 
-An AI-native PostgreSQL desktop client for macOS. Browse schemas, edit tables, write and run SQL with AI assistance — all in a fast native app.
+An AI-native PostgreSQL desktop client for macOS, Windows, and Linux. Browse schemas, edit tables, write and run SQL with AI assistance — all in a fast native app.
 
 ## Features
 
@@ -13,19 +13,32 @@ An AI-native PostgreSQL desktop client for macOS. Browse schemas, edit tables, w
 - **Saved Queries** — Bookmark frequently used queries
 - **Export** — Native file save dialog for CSV, JSON, SQL, and styled HTML exports
 
-## Install on macOS
+## Install
 
-### From Release (recommended)
+### macOS
 
-1. Download the latest `.dmg` from the [Releases](https://github.com/user/pgstudio/releases) page
-2. Open the `.dmg` and drag **PgStudio** into your Applications folder
-3. On first launch, macOS may block the app. Go to **System Settings > Privacy & Security** and click **Open Anyway**
+Download the latest `.dmg` from the [Releases](https://github.com/marcogbarcellos/pgstudio/releases) page, open it, and drag **PgStudio** into your Applications folder.
 
-### From Homebrew (when available)
+On first launch, macOS may block the app. Go to **System Settings > Privacy & Security** and click **Open Anyway**.
+
+Or install via Homebrew:
 
 ```sh
+brew tap marcogbarcellos/tap
 brew install --cask pgstudio
 ```
+
+### Windows
+
+Download the latest `.msi` or `-setup.exe` from the [Releases](https://github.com/marcogbarcellos/pgstudio/releases) page and run the installer.
+
+### Linux
+
+Download from the [Releases](https://github.com/marcogbarcellos/pgstudio/releases) page:
+
+- `.deb` for Debian/Ubuntu: `sudo dpkg -i PgStudio_*.deb`
+- `.rpm` for Fedora/RHEL: `sudo rpm -i PgStudio_*.rpm`
+- `.AppImage` for any distro: `chmod +x PgStudio_*.AppImage && ./PgStudio_*.AppImage`
 
 ## Development Setup
 
@@ -34,19 +47,24 @@ brew install --cask pgstudio
 - [Node.js](https://nodejs.org/) 18+
 - [pnpm](https://pnpm.io/) 8+
 - [Rust](https://rustup.rs/) (latest stable)
-- Xcode Command Line Tools (`xcode-select --install`)
+
+**Platform-specific:**
+
+- **macOS:** Xcode Command Line Tools (`xcode-select --install`)
+- **Linux:** `sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libgtk-3-dev libsoup-3.0-dev javascriptcoregtk-4.1-dev`
+- **Windows:** [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with "Desktop development with C++"
 
 ### Install and Run
 
 ```sh
 # Clone the repo
-git clone https://github.com/user/pgstudio.git
+git clone https://github.com/marcogbarcellos/pgstudio.git
 cd pgstudio
 
 # Install frontend dependencies
 pnpm install
 
-# Run in development mode (starts Vite dev server + Tauri window)
+# Run in development mode (starts Vite dev server + native window)
 pnpm tauri dev
 ```
 
@@ -55,11 +73,10 @@ The app will open a native window pointing at `http://localhost:1420`.
 ### Build for Production
 
 ```sh
-# Build the optimized app bundle
 pnpm tauri build
 ```
 
-The output `.dmg` and `.app` will be in `src-tauri/target/release/bundle/`.
+Output will be in `src-tauri/target/release/bundle/`.
 
 ## Tech Stack
 
@@ -93,6 +110,25 @@ pgstudio/
 └── package.json
 ```
 
+## Releases
+
+Releases are fully automated via GitHub Actions. To publish a new version:
+
+```sh
+# 1. Bump version in package.json and src-tauri/tauri.conf.json
+# 2. Commit the version bump
+git add -A && git commit -m "Release v0.2.0"
+
+# 3. Tag and push
+git tag v0.2.0
+git push origin main --tags
+```
+
+This triggers the release workflow which:
+- Builds for **macOS** (aarch64 + x86_64 + universal), **Windows** (x64), and **Linux** (x64)
+- Publishes a GitHub Release with all artifacts and SHA256 checksums
+- Auto-updates the Homebrew cask formula
+
 ## Contributing
 
 Contributions are welcome! Whether it's bug reports, feature requests, or pull requests — all help is appreciated.
@@ -112,7 +148,6 @@ Contributions are welcome! Whether it's bug reports, feature requests, or pull r
 
 ### Ideas for Contribution
 
-- Windows / Linux support
 - SSH tunnel connections
 - Query result visualization (charts)
 - Import from CSV/SQL files
