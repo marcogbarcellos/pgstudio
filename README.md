@@ -19,13 +19,18 @@ An AI-native PostgreSQL desktop client for macOS, Windows, and Linux. Browse sch
 
 Download the latest `.dmg` from the [Releases](https://github.com/marcogbarcellos/pgstudio/releases) page, open it, and drag **PgStudio** into your Applications folder.
 
-On first launch, macOS may block the app. Go to **System Settings > Privacy & Security** and click **Open Anyway**.
+Since the app is not code-signed, macOS will quarantine it. After installing, run:
+
+```sh
+xattr -cr /Applications/PgStudio.app
+```
 
 Or install via Homebrew:
 
 ```sh
 brew tap marcogbarcellos/tap
 brew install --cask pgstudio
+xattr -cr /Applications/PgStudio.app
 ```
 
 ### Windows
