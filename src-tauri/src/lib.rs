@@ -28,6 +28,7 @@ pub fn run() {
                 if let Ok(Some((provider_str, model, api_key))) = local_db.get_ai_config().await {
                     let provider = match provider_str.as_str() {
                         "openai" => ai::AIProvider::OpenAI,
+                        "google" => ai::AIProvider::Google,
                         _ => ai::AIProvider::Anthropic,
                     };
                     let ai_service = app_handle.state::<ai::AIService>();
