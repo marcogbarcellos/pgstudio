@@ -567,12 +567,12 @@ export function TableEditorView() {
     setPendingSql(sql); closeMenu(); navigate("/sql");
   };
 
-  const handleExport = async (format: "csv" | "sql" | "html") => {
+  const handleExport = async (format: "csv" | "sql" | "html" | "json") => {
     if (!ctxMenu || !activeConnectionId) return;
     try {
       const data = await getTableData(activeConnectionId, ctxMenu.schema, ctxMenu.table, 10000);
       const content = formatExport(format, ctxMenu.schema, ctxMenu.table, data);
-      await exportFile(content, `${ctxMenu.table}.${format === "html" ? "html" : format}`);
+      await exportFile(content, `${ctxMenu.table}.${format}`);
     } catch (e) { console.error("Export failed:", e); }
     closeMenu();
   };
@@ -882,6 +882,7 @@ export function TableEditorView() {
                 <MenuItem label="Export as CSV" onClick={() => handleExport("csv")} />
                 <MenuItem label="Export as SQL" onClick={() => handleExport("sql")} />
                 <MenuItem label="Export as HTML" onClick={() => handleExport("html")} />
+                <MenuItem label="Export as JSON" onClick={() => handleExport("json")} />
               </SubMenu>
             )}
           </div>
@@ -1282,9 +1283,18 @@ function generateCreateScript(schema: string, table: string, cols: ColumnInfo[])
   return `CREATE TABLE "${schema}"."${table}" (\n${lines.join(",\n")}\n);`;
 }
 
-function formatExport(format: "csv" | "sql" | "html", schema: string, table: string, data: QueryResult): string {
+function formatExport(format: "csv" | "sql" | "html" | "json", schema: string, table: string, data: QueryResult): string {
   const cols = data.columns;
   const rows = data.rows;
+
+  if (format === "json") {
+    const objects = rows.map((row) => {
+      const obj: Record<string, unknown> = {};
+      cols.forEach((col, i) => { obj[col.name] = row[i]; });
+      return obj;
+    });
+    return JSON.stringify(objects, null, 2);
+  }
 
   if (format === "csv") {
     const header = cols.map((c) => `"${c.name}"`).join(",");
