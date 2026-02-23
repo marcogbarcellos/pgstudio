@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useConnectionStore } from "@/stores/connection-store";
 import {
   listConnections,
@@ -29,6 +29,7 @@ const defaultForm: ConnectionInput = {
 export function ConnectionView() {
   const store = useConnectionStore();
   const navigate = useNavigate();
+  const location = useLocation();
   const [form, setForm] = useState<ConnectionInput>({ ...defaultForm });
   const [isEditing, setIsEditing] = useState(false);
   const [testResult, setTestResult] = useState<{
@@ -37,12 +38,66 @@ export function ConnectionView() {
   } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [connUrl, setConnUrl] = useState("");
+  const [urlError, setUrlError] = useState<string | null>(null);
+  const [urlParsed, setUrlParsed] = useState(false);
+
+  const parseConnectionUrl = (raw: string) => {
+    if (!raw.trim()) {
+      setUrlError(null);
+      return;
+    }
+    try {
+      const normalized = raw.trim().replace(/^postgres:\/\//, "postgresql://");
+      const url = new URL(normalized);
+      if (url.protocol !== "postgresql:") {
+        setUrlError("URL must start with postgresql:// or postgres://");
+        return;
+      }
+      const host = url.hostname;
+      const port = parseInt(url.port) || 5432;
+      const database = decodeURIComponent(url.pathname.slice(1)) || "postgres";
+      const user = decodeURIComponent(url.username) || "postgres";
+      const password = decodeURIComponent(url.password);
+      const sslMode = url.searchParams.get("sslmode") || "prefer";
+
+      setForm((f) => ({
+        ...f,
+        host,
+        port,
+        database,
+        user,
+        password,
+        ssl_mode: sslMode,
+        name: f.name || `${database}@${host}`,
+      }));
+      setConnUrl("");
+      setUrlError(null);
+      setUrlParsed(true);
+    } catch {
+      setUrlError("Invalid connection URL");
+    }
+  };
 
   useEffect(() => {
     listConnections()
       .then(store.setConnections)
       .catch(console.error);
   }, [store.setConnections]);
+
+  // Auto-open new connection form when navigated with state
+  useEffect(() => {
+    const state = location.state as { newConnection?: boolean } | null;
+    if (state?.newConnection) {
+      setForm({ ...defaultForm });
+      setIsEditing(true);
+      setTestResult(null);
+      setUrlParsed(false);
+      setConnUrl("");
+      // Clear the state so refreshing doesn't re-trigger
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.state]);
 
   const handleSave = async () => {
     const input = {
@@ -56,6 +111,8 @@ export function ConnectionView() {
       setForm({ ...defaultForm });
       setIsEditing(false);
       setTestResult(null);
+      setUrlParsed(false);
+      setConnUrl("");
     } catch (e) {
       console.error(e);
     }
@@ -152,6 +209,8 @@ export function ConnectionView() {
               setForm({ ...defaultForm });
               setIsEditing(true);
               setTestResult(null);
+              setUrlParsed(false);
+              setConnUrl("");
             }}
             style={{
               display: "flex",
@@ -186,6 +245,105 @@ export function ConnectionView() {
             <h2 style={{ fontSize: "14px", fontWeight: 600, color: "var(--color-text-primary)", marginBottom: "24px" }}>
               {form.id ? "Edit Connection" : "New Connection"}
             </h2>
+
+            {/* Connection URL input — only for new connections */}
+            {!form.id && (
+              <>
+                {urlParsed ? (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "10px",
+                      borderRadius: "12px",
+                      padding: "12px 16px",
+                      marginBottom: "20px",
+                      backgroundColor: "rgba(62,207,142,0.1)",
+                      color: "var(--color-accent)",
+                      fontSize: "12px",
+                    }}
+                  >
+                    <CheckCircle2 size={14} style={{ flexShrink: 0 }} />
+                    <span>Connection URL parsed — verify the fields below.</span>
+                    <button
+                      onClick={() => setUrlParsed(false)}
+                      style={{
+                        marginLeft: "auto",
+                        background: "none",
+                        border: "none",
+                        color: "var(--color-text-muted)",
+                        fontSize: "12px",
+                        cursor: "pointer",
+                        textDecoration: "underline",
+                      }}
+                    >
+                      Paste another
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ marginBottom: "20px" }}>
+                    <label style={{ display: "block", fontSize: "12px", fontWeight: 500, color: "var(--color-text-muted)", marginBottom: "8px" }}>
+                      Connection URL
+                    </label>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <input
+                        type="text"
+                        value={connUrl}
+                        onChange={(e) => {
+                          setConnUrl(e.target.value);
+                          setUrlError(null);
+                        }}
+                        onBlur={() => parseConnectionUrl(connUrl)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") parseConnectionUrl(connUrl);
+                        }}
+                        placeholder="postgresql://user:password@host:port/database"
+                        style={{
+                          flex: 1,
+                          borderRadius: "10px",
+                          border: urlError ? "1px solid var(--color-danger)" : "1px solid var(--color-border)",
+                          backgroundColor: "var(--color-bg-tertiary)",
+                          padding: "10px 14px",
+                          fontSize: "14px",
+                          color: "var(--color-text-primary)",
+                          outline: "none",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                      <button
+                        onClick={() => parseConnectionUrl(connUrl)}
+                        style={{
+                          borderRadius: "10px",
+                          border: "1px solid var(--color-border)",
+                          backgroundColor: "transparent",
+                          padding: "10px 16px",
+                          fontSize: "13px",
+                          color: "var(--color-text-secondary)",
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        Parse
+                      </button>
+                    </div>
+                    {urlError && (
+                      <p style={{ fontSize: "12px", color: "var(--color-danger)", marginTop: "6px" }}>
+                        {urlError}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Separator */}
+                {!urlParsed && (
+                  <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "20px" }}>
+                    <div style={{ flex: 1, height: "1px", backgroundColor: "var(--color-border)" }} />
+                    <span style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>or fill in manually</span>
+                    <div style={{ flex: 1, height: "1px", backgroundColor: "var(--color-border)" }} />
+                  </div>
+                )}
+              </>
+            )}
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px", marginBottom: "24px" }}>
               <InputField
@@ -289,6 +447,8 @@ export function ConnectionView() {
                 onClick={() => {
                   setIsEditing(false);
                   setTestResult(null);
+                  setUrlParsed(false);
+                  setConnUrl("");
                 }}
                 style={{
                   borderRadius: "10px",

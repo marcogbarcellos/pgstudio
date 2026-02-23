@@ -134,10 +134,33 @@ export function HomeView() {
                   </button>
                 ))}
               </div>
+              <button
+                onClick={() => navigate("/settings", { state: { newConnection: true } })}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "8px",
+                  width: "100%",
+                  borderRadius: "10px",
+                  backgroundColor: "transparent",
+                  border: "1px dashed var(--color-border)",
+                  padding: "12px 20px",
+                  fontSize: "13px",
+                  fontWeight: 500,
+                  color: "var(--color-text-secondary)",
+                  cursor: "pointer",
+                  marginTop: "12px",
+                  transition: "background-color 0.15s, color 0.15s",
+                }}
+              >
+                <Plus size={14} />
+                New Connection
+              </button>
             </div>
           ) : (
             <button
-              onClick={() => navigate("/settings")}
+              onClick={() => navigate("/settings", { state: { newConnection: true } })}
               style={{
                 display: "flex",
                 alignItems: "center",

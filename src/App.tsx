@@ -16,6 +16,7 @@ import { AISettingsView } from "@/views/AISettingsView";
 import { useAIStore } from "@/stores/ai-store";
 import { useConnectionStore } from "@/stores/connection-store";
 import { aiStatus, listConnections } from "@/lib/tauri";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export default function App() {
   const { onboardingDone, setOnboardingDone, setConfigured } = useAIStore();
@@ -46,6 +47,7 @@ export default function App() {
       <div style={{ display: "flex", flexDirection: "column", height: "100vh", width: "100vw", backgroundColor: "var(--color-bg-primary)" }}>
         <div
           data-tauri-drag-region
+          onMouseDown={(e) => { e.preventDefault(); getCurrentWindow().startDragging(); }}
           style={{ height: "44px", flexShrink: 0, backgroundColor: "var(--color-bg-secondary)", borderBottom: "1px solid var(--color-border)" }}
         />
         <main style={{ flex: 1, overflowY: "auto", backgroundColor: "var(--color-bg-primary)" }}>

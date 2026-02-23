@@ -3,6 +3,7 @@ import { useConnectionStore, useIsConnected } from "@/stores/connection-store";
 import { connect, disconnect, getSchemas, getFullSchema, getDatabases } from "@/lib/tauri";
 import type { ConnectionInput } from "@/lib/tauri";
 import { Database, Circle, ChevronDown, Check, X } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 const isMac = navigator.userAgent.includes("Mac");
 
@@ -82,6 +83,13 @@ export function TopBar() {
     }
   }, [activeConnectionId, connectedIds, connections, connectTo, setActiveConnection, setSchemas, setSchemaContext, setDatabases, setActiveDatabase]);
 
+  const handleDrag = useCallback((e: React.MouseEvent) => {
+    // Don't drag when clicking interactive elements
+    if ((e.target as HTMLElement).closest("button, input, select, textarea, a")) return;
+    e.preventDefault();
+    getCurrentWindow().startDragging();
+  }, []);
+
   const handleDisconnect = useCallback(async (e: React.MouseEvent, connId: string) => {
     e.stopPropagation();
     try {
@@ -95,6 +103,7 @@ export function TopBar() {
   return (
     <header
       data-tauri-drag-region
+      onMouseDown={handleDrag}
       style={{
         display: "flex",
         height: "48px",
