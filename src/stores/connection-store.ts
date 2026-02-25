@@ -16,6 +16,7 @@ interface ConnectionState {
   connectionData: Record<string, ConnectionData>;
   pendingSql: string | null;
   pendingSqlAutoRun: boolean;
+  pendingTable: { connectionId: string; schema: string; table: string } | null;
 
   // Convenience getters
   readonly isConnected: boolean;
@@ -31,6 +32,7 @@ interface ConnectionState {
   setTables: (schema: string, tables: TableInfo[]) => void;
   setSchemaContext: (ctx: SchemaContext) => void;
   setPendingSql: (sql: string | null, autoRun?: boolean) => void;
+  setPendingTable: (pending: { connectionId: string; schema: string; table: string } | null) => void;
   reset: () => void;
 
   // Per-connection data setters
@@ -56,6 +58,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   connectionData: {},
   pendingSql: null,
   pendingSqlAutoRun: false,
+  pendingTable: null,
 
   get isConnected() {
     const state = get();
@@ -160,6 +163,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }),
 
   setPendingSql: (sql, autoRun) => set({ pendingSql: sql, pendingSqlAutoRun: !!autoRun }),
+  setPendingTable: (pending) => set({ pendingTable: pending }),
 
   reset: () =>
     set({
@@ -168,6 +172,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       connectionData: {},
       pendingSql: null,
       pendingSqlAutoRun: false,
+      pendingTable: null,
     }),
 
   // Per-connection data setters (explicit connection ID)

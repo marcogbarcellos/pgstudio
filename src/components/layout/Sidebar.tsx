@@ -3,7 +3,6 @@ import { NavLink } from "react-router-dom";
 import type { LucideIcon } from "lucide-react";
 import {
   Home,
-  Database,
   TerminalSquare,
   History,
   Star,
@@ -21,7 +20,6 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { to: "/", icon: Home, label: "Home" },
-  { to: "/tables", icon: Database, label: "Database" },
   { to: "/sql", icon: TerminalSquare, label: "SQL Editor" },
   { to: "/history", icon: History, label: "Query History" },
   { to: "/saved", icon: Star, label: "Saved Queries" },

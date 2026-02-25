@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Routes, Route } from "react-router-dom";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { ObjectTreeSidebar } from "@/components/layout/ObjectTreeSidebar";
 import { TopBar } from "@/components/layout/TopBar";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { OnboardingView } from "@/views/OnboardingView";
@@ -62,6 +63,7 @@ export default function App() {
       <TopBar />
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
         <Sidebar />
+        <ObjectTreeSidebar />
         <main style={{ flex: 1, overflowY: "auto", backgroundColor: "var(--color-bg-primary)" }}>
           <Routes>
             <Route path="/" element={<HomeView />} />

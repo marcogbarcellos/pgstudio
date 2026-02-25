@@ -664,8 +664,13 @@ export function DataGrid({
               return (
                 <tr
                   key={rowIdx}
+                  onClick={(e) => {
+                    if ((e.target as HTMLElement).tagName === "INPUT") return;
+                    toggleRow(rowIdx);
+                  }}
                   style={{
                     backgroundColor: isSelected ? "rgba(62,207,142,0.06)" : "transparent",
+                    cursor: "pointer",
                   }}
                 >
                   <td

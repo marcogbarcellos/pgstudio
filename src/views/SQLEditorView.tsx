@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { SQLEditor } from "@/components/editor/SQLEditor";
 import { DataGrid } from "@/components/table/DataGrid";
-import { useConnectionStore, useIsConnected, useActiveSchemaContext } from "@/stores/connection-store";
+import { useConnectionStore, useIsConnected, useActiveSchemaContext, useActiveDatabase } from "@/stores/connection-store";
 import {
   executeQuery,
   aiNlToSql,
@@ -11,6 +11,7 @@ import {
   searchAiPrompts,
   getColumns,
   deleteQueryHistory,
+  switchDatabase,
 } from "@/lib/tauri";
 import type { QueryResult, QueryHistoryEntry, AiPromptSuggestion, ColumnInfo } from "@/lib/tauri";
 import {
@@ -33,17 +34,21 @@ interface Tab {
   sql: string;
   result: QueryResult | null;
   error: string | null;
+  connectionId: string | null;
+  database: string | null;
 }
 
 let tabCounter = 1;
 
-function createTab(): Tab {
+function createTab(connectionId: string | null, database: string | null): Tab {
   return {
     id: crypto.randomUUID(),
     name: `Query ${tabCounter++}`,
     sql: "",
     result: null,
     error: null,
+    connectionId,
+    database,
   };
 }
 
@@ -52,7 +57,11 @@ export function SQLEditorView() {
     useConnectionStore();
   const isConnected = useIsConnected();
   const schemaContext = useActiveSchemaContext();
-  const [tabs, setTabs] = useState<Tab[]>([createTab()]);
+  const activeDatabase = useActiveDatabase();
+  const [tabs, setTabs] = useState<Tab[]>(() => {
+    const initial = createTab(null, null);
+    return [initial];
+  });
   const [activeTabId, setActiveTabId] = useState(tabs[0].id);
   const [isExecuting, setIsExecuting] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
@@ -104,6 +113,8 @@ export function SQLEditorView() {
       sql: pendingSql,
       result: null,
       error: null,
+      connectionId: activeConnectionId,
+      database: activeDatabase,
     };
     setTabs((prev) => [...prev, newTab]);
     setActiveTabId(newTab.id);
@@ -111,7 +122,7 @@ export function SQLEditorView() {
       setAutoRunTabId(newTab.id);
     }
     setPendingSql(null);
-  }, [pendingSql, pendingSqlAutoRun, setPendingSql]);
+  }, [pendingSql, pendingSqlAutoRun, setPendingSql, activeConnectionId, activeDatabase]);
 
   // Load recent queries
   useEffect(() => {
@@ -198,6 +209,19 @@ export function SQLEditorView() {
     [],
   );
 
+  // Ensure the correct database is active for the given tab before executing
+  const ensureTabDatabase = useCallback(async (tab: Tab) => {
+    const connId = tab.connectionId || activeConnectionId;
+    const db = tab.database;
+    if (!connId || !db) return;
+    const connData = useConnectionStore.getState().connectionData[connId];
+    const currentDb = connData?.activeDatabase;
+    if (currentDb && currentDb !== db) {
+      await switchDatabase(connId, db);
+      useConnectionStore.getState().setConnectionActiveDatabase(connId, db);
+    }
+  }, [activeConnectionId]);
+
   // Try to extract table from simple SELECT queries for inline editing
   const parsedTable = useMemo(() => {
     const sql = activeTab.sql.trim();
@@ -216,6 +240,7 @@ export function SQLEditorView() {
   const handleSqlSaveEdits = useCallback(
     async (edits: { rowIdx: number; colIdx: number; newValue: unknown }[]) => {
       if (!activeConnectionId || !activeTab.result || !parsedTable) return;
+      await ensureTabDatabase(activeTab);
       const cols = activeTab.result.columns;
       const dataRows = activeTab.result.rows;
       const fqt = `"${parsedTable.schema}"."${parsedTable.table}"`;
@@ -265,7 +290,7 @@ export function SQLEditorView() {
       updateTab(activeTab.id, { result: res, error: null });
       refreshRecent();
     },
-    [activeConnectionId, activeTab, parsedTable, updateTab, refreshRecent],
+    [activeConnectionId, activeTab, parsedTable, updateTab, refreshRecent, ensureTabDatabase],
   );
 
   // Auto-execute a tab created with autoRun flag
@@ -276,14 +301,15 @@ export function SQLEditorView() {
     setAutoRunTabId(null);
     setIsExecuting(true);
     updateTab(tab.id, { error: null, result: null });
-    executeQuery(activeConnectionId, tab.sql.trim())
+    ensureTabDatabase(tab)
+      .then(() => executeQuery(activeConnectionId, tab.sql.trim()))
       .then((res) => { updateTab(tab.id, { result: res, error: null }); refreshRecent(); })
       .catch((e) => { updateTab(tab.id, { error: String(e), result: null }); refreshRecent(); })
       .finally(() => setIsExecuting(false));
-  }, [autoRunTabId, activeConnectionId, tabs, updateTab, refreshRecent]);
+  }, [autoRunTabId, activeConnectionId, tabs, updateTab, refreshRecent, ensureTabDatabase]);
 
   const addTab = () => {
-    const tab = createTab();
+    const tab = createTab(activeConnectionId, activeDatabase);
     setTabs((prev) => [...prev, tab]);
     setActiveTabId(tab.id);
   };
@@ -302,9 +328,20 @@ export function SQLEditorView() {
     if (!activeConnectionId || !activeTab.sql.trim() || isExecuting) return;
 
     setIsExecuting(true);
-    updateTab(activeTab.id, { error: null, result: null });
+    // Stamp tab with current db context if not set yet
+    if (!activeTab.connectionId || !activeTab.database) {
+      updateTab(activeTab.id, {
+        connectionId: activeTab.connectionId || activeConnectionId,
+        database: activeTab.database || activeDatabase,
+        error: null,
+        result: null,
+      });
+    } else {
+      updateTab(activeTab.id, { error: null, result: null });
+    }
 
     try {
+      await ensureTabDatabase(activeTab);
       const res = await executeQuery(activeConnectionId, activeTab.sql.trim());
       updateTab(activeTab.id, { result: res, error: null });
       refreshRecent();
@@ -314,7 +351,7 @@ export function SQLEditorView() {
     } finally {
       setIsExecuting(false);
     }
-  }, [activeConnectionId, activeTab, isExecuting, updateTab, refreshRecent]);
+  }, [activeConnectionId, activeTab, activeDatabase, isExecuting, updateTab, refreshRecent, ensureTabDatabase]);
 
   const handleNlToSql = async () => {
     if (!aiPrompt.trim() || !schemaContext || aiLoading) return;
@@ -368,6 +405,7 @@ export function SQLEditorView() {
     updateTab(activeTab.id, { sql, error: null, result: null });
     setIsExecuting(true);
     try {
+      await ensureTabDatabase(activeTab);
       const res = await executeQuery(activeConnectionId, sql.trim());
       updateTab(activeTab.id, { sql, result: res, error: null });
       refreshRecent();
@@ -472,6 +510,9 @@ export function SQLEditorView() {
                 }}
               >
                 <span style={{ maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tab.name}</span>
+                {tab.database && (
+                  <span style={{ fontSize: "10px", color: "var(--color-text-muted)", opacity: 0.7 }}>{tab.database}</span>
+                )}
                 {tabs.length > 1 && (
                   <X
                     size={12}
